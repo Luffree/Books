@@ -88,24 +88,29 @@ def get_distinct_generos() -> list:
 # ─── Google Books API ──────────────────────────────────────────────────────────
 
 def search_google_books(query: str) -> list:
-    try:
-        resp = requests.get(
-            GOOGLE_BOOKS_URL,
-            params={"q": query, "maxResults": 10, "langRestrict": "pt"},
-            timeout=8,
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        return data.get("items", [])
-    except requests.exceptions.Timeout:
-        st.error("Tempo esgotado ao contatar a API do Google Books. Tente novamente.")
-        return []
-    except requests.exceptions.ConnectionError:
-        st.error("Sem conexão com a internet. Verifique sua rede.")
-        return []
-    except Exception as e:
-        st.error(f"Erro ao buscar livros: {e}")
-        return []
+    import time
+    params = {"q": query, "maxResults": 10}
+    for attempt in range(3):
+        try:
+            resp = requests.get(GOOGLE_BOOKS_URL, params=params, timeout=10)
+            if resp.status_code == 429:
+                wait = 2 ** attempt
+                st.warning(f"API do Google Books com muitas requisições. Aguardando {wait}s e tentando novamente...")
+                time.sleep(wait)
+                continue
+            resp.raise_for_status()
+            return resp.json().get("items", [])
+        except requests.exceptions.Timeout:
+            st.error("Tempo esgotado ao contatar a API do Google Books. Tente novamente.")
+            return []
+        except requests.exceptions.ConnectionError:
+            st.error("Sem conexão com a internet. Verifique sua rede.")
+            return []
+        except Exception as e:
+            st.error(f"Erro ao buscar livros: {e}")
+            return []
+    st.error("A API do Google Books está temporariamente indisponível (limite de requisições). Aguarde alguns segundos e tente novamente.")
+    return []
 
 
 def parse_volume(item: dict) -> dict:
