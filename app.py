@@ -13,7 +13,8 @@ st.set_page_config(
 )
 
 PLACEHOLDER_IMG = "https://via.placeholder.com/128x192.png?text=Sem+Capa"
-GOOGLE_BOOKS_URL = "https://www.googleapis.com/books/v1/volumes"
+OPEN_LIBRARY_URL = "https://openlibrary.org/search.json"
+OPEN_LIBRARY_COVER = "https://covers.openlibrary.org/b/id/{cover_id}-M.jpg"
 STATUS_OPTIONS = ["Quero Ler", "Lendo", "Lido", "Abandonado"]
 STAR_MAP = {1: "⭐", 2: "⭐⭐", 3: "⭐⭐⭐", 4: "⭐⭐⭐⭐", 5: "⭐⭐⭐⭐⭐"}
 
@@ -85,54 +86,40 @@ def get_distinct_generos() -> list:
     return [r[0] for r in rows]
 
 
-# ─── Google Books API ──────────────────────────────────────────────────────────
+# ─── Open Library API ─────────────────────────────────────────────────────────
 
-def search_google_books(query: str) -> list:
-    import time
-    params = {"q": query, "maxResults": 10}
-    for attempt in range(3):
-        try:
-            resp = requests.get(GOOGLE_BOOKS_URL, params=params, timeout=10)
-            if resp.status_code == 429:
-                wait = 2 ** attempt
-                st.warning(f"API do Google Books com muitas requisições. Aguardando {wait}s e tentando novamente...")
-                time.sleep(wait)
-                continue
-            resp.raise_for_status()
-            return resp.json().get("items", [])
-        except requests.exceptions.Timeout:
-            st.error("Tempo esgotado ao contatar a API do Google Books. Tente novamente.")
-            return []
-        except requests.exceptions.ConnectionError:
-            st.error("Sem conexão com a internet. Verifique sua rede.")
-            return []
-        except Exception as e:
-            st.error(f"Erro ao buscar livros: {e}")
-            return []
-    st.error("A API do Google Books está temporariamente indisponível (limite de requisições). Aguarde alguns segundos e tente novamente.")
-    return []
+def search_open_library(query: str) -> list:
+    try:
+        resp = requests.get(
+            OPEN_LIBRARY_URL,
+            params={"q": query, "limit": 10, "fields": "key,title,author_name,first_publish_year,cover_i,subject"},
+            timeout=10,
+        )
+        resp.raise_for_status()
+        return resp.json().get("docs", [])
+    except requests.exceptions.Timeout:
+        st.error("Tempo esgotado ao contatar a Open Library. Tente novamente.")
+        return []
+    except requests.exceptions.ConnectionError:
+        st.error("Sem conexão com a internet. Verifique sua rede.")
+        return []
+    except Exception as e:
+        st.error(f"Erro ao buscar livros: {e}")
+        return []
 
 
-def parse_volume(item: dict) -> dict:
-    info = item.get("volumeInfo", {})
-    images = info.get("imageLinks", {})
-    capa = (
-        images.get("thumbnail")
-        or images.get("smallThumbnail")
-        or PLACEHOLDER_IMG
-    )
-    # force HTTPS
-    capa = capa.replace("http://", "https://")
-    authors = info.get("authors", [])
-    published = info.get("publishedDate", "")
-    ano = published[:4] if published else ""
+def parse_volume(doc: dict) -> dict:
+    cover_id = doc.get("cover_i")
+    capa = OPEN_LIBRARY_COVER.format(cover_id=cover_id) if cover_id else PLACEHOLDER_IMG
+    authors = doc.get("author_name") or []
+    subjects = doc.get("subject") or []
     return {
-        "id": item.get("id", str(uuid.uuid4())),
-        "titulo": info.get("title", "Sem título"),
-        "autor": ", ".join(authors) if authors else "Desconhecido",
-        "ano": ano,
-        "genero": ", ".join(info.get("categories", [])),
-        "sinopse": info.get("description", ""),
+        "id": doc.get("key", str(uuid.uuid4())).replace("/works/", ""),
+        "titulo": doc.get("title") or "Sem título",
+        "autor": authors[0] if authors else "Desconhecido",
+        "ano": str(doc.get("first_publish_year") or ""),
+        "genero": subjects[0] if subjects else "",
+        "sinopse": "",
         "capa_url": capa,
     }
 
@@ -201,11 +188,11 @@ def tab_buscar():
     query = st.text_input("Digite o título, autor ou ISBN:", placeholder="Ex: Dom Casmurro")
 
     if not query:
-        st.info("Digite algo no campo acima para buscar livros via Google Books.")
+        st.info("Digite algo no campo acima para buscar livros via Open Library.")
         return
 
     with st.spinner("Buscando..."):
-        items = search_google_books(query)
+        items = search_open_library(query)
 
     if not items:
         st.warning("Nenhum resultado encontrado. Tente outros termos.")
@@ -232,7 +219,7 @@ def tab_buscar():
 
 def tab_manual():
     st.header("✏️ Cadastro Manual")
-    st.markdown("Cadastre livros que não estão na API do Google Books.")
+    st.markdown("Cadastre livros que não estão na Open Library.")
 
     with st.form("form_manual"):
         col1, col2 = st.columns(2)
